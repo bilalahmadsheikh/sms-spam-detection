@@ -1,0 +1,180 @@
+import nltk
+import string
+import re
+import pandas as pd
+import os
+import tkinter as tk
+from tkinter import messagebox, scrolledtext, LabelFrame
+from nltk.corpus import stopwords
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline, FeatureUnion
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer, TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.metrics import accuracy_score, classification_report
+
+# Download stopwords
+nltk.download('stopwords')
+stop_words = set(stopwords.words('english'))
+
+# Text Preprocessor
+def process_text(text):
+    text = re.sub(r'\d+', '', text)  # Remove digits
+    nopunc = ''.join([char for char in text if char not in string.punctuation])
+    return [word for word in nopunc.split() if word.lower() not in stop_words]
+
+# Keyword presence features
+class KeywordFeatures(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        self.keywords = ['click', 'win', 'free', 'urgent', 'offer', 'limited', 'now', 'cash', 'prize', 'buy']
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        return pd.DataFrame([
+            [1 if kw in text.lower() else 0 for kw in self.keywords] for text in X
+        ])
+
+# Model training function
+def load_and_train_model():
+    file_path = os.path.join(os.getcwd(), 'spam.csv')
+    try:
+        df = pd.read_csv(file_path, encoding='latin-1')[['v1', 'v2']]
+        df.columns = ['class', 'text']
+    except Exception as e:
+        messagebox.showerror("File Error", str(e))
+        return None, None, None
+
+    X_train, X_test, y_train, y_test = train_test_split(df['text'], df['class'], test_size=0.2, random_state=42)
+
+    pipeline = Pipeline([
+        ('features', FeatureUnion([
+            ('cleaned', Pipeline([
+                ('vect', CountVectorizer(analyzer=process_text)),
+                ('tfidf', TfidfTransformer())
+            ])),
+            ('ngrams', TfidfVectorizer(stop_words='english', ngram_range=(1, 2), max_features=5000)),
+            ('keywords', KeywordFeatures())
+        ])),
+        ('classifier', MultinomialNB())
+    ])
+
+    pipeline.fit(X_train, y_train)
+    y_pred = pipeline.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    report = classification_report(y_test, y_pred, output_dict=True)
+    return pipeline, accuracy, report
+
+# Predict message category
+def classify_message():
+    text = entry.get("1.0", tk.END).strip()
+    if not text:
+        messagebox.showwarning("Input Required", "Please enter a message to classify.")
+        return
+    prediction = model.predict([text])[0]
+    result = "🟢 This message is NOT SPAM." if prediction == 'ham' else "🔴 WARNING: This message is SPAM."
+    result_label.config(text=result, fg="green" if prediction == 'ham' else "red")
+
+# Clear function
+def clear_input():
+    entry.delete("1.0", tk.END)
+    result_label.config(text="")
+
+# Background animation utilities
+def rgb_to_hex(rgb):
+    return "#%02x%02x%02x" % rgb
+
+def animate_background():
+    global color_index, step
+    r1, g1, b1 = color_palette[color_index % len(color_palette)]
+    r2, g2, b2 = color_palette[(color_index + 1) % len(color_palette)]
+    r = int(r1 + (r2 - r1) * step / steps)
+    g = int(g1 + (g2 - g1) * step / steps)
+    b = int(b1 + (b2 - b1) * step / steps)
+    hex_color = rgb_to_hex((r, g, b))
+    app.configure(bg=hex_color)
+    for widget in app.winfo_children():
+        try:
+            widget.configure(bg=hex_color)
+        except:
+            pass
+    step += 1
+    if step > steps:
+        step = 0
+        color_index += 1
+    app.after(50, animate_background)
+
+# Background colors
+color_palette = [
+    (248, 249, 250), (227, 242, 253),
+    (255, 243, 205), (212, 237, 218),
+    (252, 228, 236)
+]
+color_index = 0
+step = 0
+steps = 30
+
+# Train model
+model = load_and_train_model()
+if model is None:
+    exit()
+
+# App setup
+app = tk.Tk()
+app.title("📱 SMS Spam Detector")
+app.geometry("700x420")
+app.minsize(500, 350)
+app.columnconfigure(0, weight=1)
+app.rowconfigure(4, weight=1)
+
+animate_background()
+model, accuracy, summary = load_and_train_model()
+# Title
+title = tk.Label(app, text="SMS Spam Detector", font=("Helvetica", 20, "bold"))
+title.grid(row=0, column=0, pady=(20, 5), sticky="n")
+
+# Instructions
+instr = tk.Label(app, text="Enter your SMS message below:", font=("Helvetica", 12))
+instr.grid(row=1, column=0)
+
+# Input frame
+frame = LabelFrame(app, bd=1, relief="ridge", bg="#ffffff")
+frame.grid(row=2, column=0, padx=40, pady=10, sticky="nsew")
+frame.columnconfigure(0, weight=1)
+
+entry = scrolledtext.ScrolledText(
+    frame,
+    wrap=tk.WORD,
+    width=1,
+    height=5,
+    font=("Helvetica", 11),
+    bg="#fefefe",
+    relief="flat"
+)
+entry.grid(row=0, column=0, sticky="nsew", padx=8, pady=4)
+
+# Buttons
+btn_frame = tk.Frame(app)
+btn_frame.grid(row=3, column=0, pady=10)
+
+tk.Button(btn_frame, text="🔍 Detect", command=classify_message,
+          bg="#007BFF", fg="white", width=16, font=("Helvetica", 11, "bold")).grid(row=0, column=0, padx=10)
+
+tk.Button(btn_frame, text="🧹 Clear", command=clear_input,
+          bg="#6c757d", fg="white", width=16, font=("Helvetica", 11)).grid(row=0, column=1, padx=10)
+
+# Result display
+result_label = tk.Label(app, text="", font=("Helvetica", 14, "bold"))
+result_label.grid(row=4, column=0, pady=20)
+# Accuracy & Metrics
+tk.Label(app, text=f"✅ Accuracy: {accuracy * 100:.2f}%", font=("Helvetica", 10)).grid(row=5, column=0)
+tk.Label(app, text=f"ℹ️ Precision (spam): {summary['spam']['precision']:.2f} | Recall: {summary['spam']['recall']:.2f}", font=("Helvetica", 9)).grid(row=6, column=0)
+
+# Footer
+footer = tk.Label(app, text="By Bilal Ahmad", font=("Helvetica", 9), fg="#6c757d")
+footer.grid(row=7, column=0, pady=(0, 10), sticky="s")
+
+
+# Run
+app.mainloop()
